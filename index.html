@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Landsat 지수 분석 플랫폼</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="stylesheet" href="style.css?v=20261007c">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">L</span>
+    <div>
+      <h1>Landsat 8·9 다중분광지수 분석 플랫폼</h1>
+      <p>NDVI · GNDVI · SAVI · NBR · NDMI · NDWI · MNDWI · NDBI 자동 산출 · 임계값 분류 · 영역 면적 통계</p>
+    </div>
+  </div>
+  <div id="sceneBadge" class="scene-badge">영상 미선택</div>
+</header>
+
+<main>
+  <!-- ───────────── 작업 단계 ───────────── -->
+  <section class="steps">
+    <article class="step" id="step1">
+      <header><span class="num">1</span><h2>내 PC에서 영상 불러오기</h2></header>
+      <label class="btn primary file">
+        <input type="file" id="folderInput" webkitdirectory directory multiple hidden>
+        📁 폴더 선택
+      </label>
+      <select id="sceneSel" hidden></select>
+    </article>
+
+    <article class="step locked" id="step2">
+      <header><span class="num">2</span><h2>다중분광지수 선택</h2></header>
+      <button class="select-box step-toggle" data-step="2"><span id="sum2">지수 선택</span><span class="caret">▾</span></button>
+      <div class="step-body">
+        <div id="indexList" class="index-list"></div>
+      </div>
+    </article>
+
+    <article class="step locked" id="step3">
+      <header class="step-toggle" data-step="3"><span class="num">3</span><h2>영상 불러오기</h2><span class="caret">▾</span></header>
+      <div class="step-body">
+      <div class="info">필요 밴드 <div id="needBands" class="chips"></div></div>
+      <div class="row">
+        <label for="resSel">분석 해상도</label>
+        <select id="resSel">
+          <option value="30">30 m (원본)</option>
+          <option value="60" selected>60 m</option>
+          <option value="90">90 m</option>
+          <option value="150">150 m (빠름)</option>
+        </select>
+      </div>
+      <label class="check"><input type="checkbox" id="cloudMask" checked> 구름·그림자 마스킹 (QA_PIXEL)</label>
+      <button id="btnLoad" class="btn primary" disabled>영상 불러오기</button>
+      <div id="loadInfo" class="info muted"></div>
+      </div>
+    </article>
+
+    <article class="step locked" id="step4">
+      <header class="step-toggle" data-step="4"><span class="num">4</span><h2>분석 실행</h2><span class="caret">▾</span></header>
+      <div class="step-body">
+      <button id="btnRun" class="btn primary" disabled>▶ 분석 실행</button>
+      <div id="runInfo" class="info muted">선택한 지수를 밴드 연산으로 계산합니다.</div>
+      </div>
+    </article>
+
+    <article class="step locked" id="step5">
+      <header class="step-toggle" data-step="5" title="오른쪽 패널의 ‘결과물 분류’ 탭 열기"><span class="num">5</span><h2>결과물 분류하기</h2><span class="caret">▸</span></header>
+    </article>
+
+    <article class="step locked" id="step6">
+      <header class="step-toggle" data-step="6" title="오른쪽 패널의 ‘통계 분석’ 탭 열기"><span class="num">6</span><h2>통계 분석 결과</h2><span class="caret">▸</span></header>
+    </article>
+  </section>
+
+  <!-- ───────────── 뷰어 ───────────── -->
+  <section class="viewer">
+    <div class="viewer-bar">
+      <div id="tabs" class="tabs"><span class="muted">지수를 선택하고 영상을 불러오면 여기에 표시됩니다.</span></div>
+    </div>
+    <div class="viewer-grid">
+      <div class="col-left">
+        <div class="panel">
+          <div class="panel-head"><span class="tag">밴드 A</span><span id="headTop">—</span></div>
+          <div id="mapTop" class="map"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="tag">밴드 B</span><span id="headBottom">—</span></div>
+          <div id="mapBottom" class="map"></div>
+        </div>
+      </div>
+
+      <div class="panel main">
+        <div class="panel-head"><span class="tag accent">결과</span><span id="headMain">대한민국 기본 지도</span></div>
+        <div id="mapMain" class="map"></div>
+      </div>
+
+      <!-- 분석 패널: 5단계 분류 · 6단계 통계 (지도 밖에 한 곳으로 정리) -->
+      <aside class="panel side">
+        <div class="side-tabs">
+          <button class="side-tab active" data-tab="cls"><span class="num">5</span>결과물 분류</button>
+          <button class="side-tab" data-tab="stat"><span class="num">6</span>통계 분석</button>
+        </div>
+
+        <!-- 5단계: 결과물 분류 -->
+        <div class="side-body" id="tab-cls">
+          <p id="clsEmpty" class="empty">4단계 ‘분석 실행’ 후<br>여기에서 임계값을 조정합니다.</p>
+          <div id="clsWrap" hidden>
+            <section class="sec">
+              <div class="sec-head"><h3>임계값 설정</h3><span id="confirmBadge" class="badge"></span></div>
+              <div class="row">
+                <select id="clsIndex"></select>
+                <select id="clsDir">
+                  <option value="ge">이상 (≥)</option>
+                  <option value="le">이하 (≤)</option>
+                </select>
+              </div>
+              <div class="slider-row">
+                <input type="range" id="thr" min="-1" max="1" step="0.01" value="0.3" disabled>
+                <output id="thrVal">0.30</output>
+              </div>
+              <canvas id="hist"></canvas>
+              <div id="clsInfo" class="info"></div>
+              <label class="check"><input type="checkbox" id="showBelow" checked> 미리보기에서 미분류 영역 회색 표시</label>
+              <button id="btnConfirm" class="btn primary block" disabled>임계값 확정</button>
+            </section>
+            <section class="sec">
+              <div class="sec-head"><h3>범례</h3></div>
+              <div id="legendBox" class="legend legend-box"></div>
+            </section>
+            <section class="sec">
+              <div class="sec-head"><h3>결과 투명도</h3><output class="op-val">10%</output></div>
+              <input type="range" id="opacity" class="op-slider" min="0" max="100" step="5" value="10">
+            </section>
+          </div>
+        </div>
+
+        <!-- 6단계: 통계 분석 -->
+        <div class="side-body" id="tab-stat" hidden>
+          <section class="sec">
+            <div class="sec-head"><h3>행정구역 (시·군)</h3><span id="adminIdx" class="badge"></span></div>
+            <p class="hint">결과 지도에서 시·군을 클릭하면 선택(적색)되고, 다시 클릭하면 해제됩니다.</p>
+            <div class="tbl-wrap"><table id="adminTable" class="stat-table"></table></div>
+            <p id="adminNote" class="hint"></p>
+            <div class="btn-row">
+              <button id="adminClear" class="btn ghost">선택 해제</button>
+              <button id="adminCsv" class="btn">CSV 저장</button>
+            </div>
+          </section>
+          <section class="sec">
+            <div class="sec-head"><h3>직접 그린 영역</h3></div>
+            <div class="btn-row">
+              <button id="btnPoly" class="btn primary" disabled>⬠ 폴리곤</button>
+              <button id="btnRect" class="btn" disabled>▭ 사각형</button>
+              <button id="btnClear" class="btn ghost" disabled>지우기</button>
+            </div>
+            <div class="tbl-wrap"><table id="drawTable" class="stat-table"></table></div>
+            <p id="statInfo" class="hint"></p>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<div id="busy" hidden>
+  <div class="busy-box">
+    <div class="spinner"></div>
+    <div id="busyMsg">처리 중…</div>
+    <div class="bar"><div id="busyBar"></div></div>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.12.1/dist/proj4.js"></script>
+<script src="data/sigungu.js?v=20261007"></script>
+<script src="app.js?v=20261007d"></script>
+</body>
+</html>
